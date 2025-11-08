@@ -74,7 +74,7 @@ export function isIPFSUrl(url: string): boolean {
 
 export function convertIPFSToHTTP(ipfsUrl: string): string {
   if (!isIPFSUrl(ipfsUrl)) return ipfsUrl
-  
+
   const hash = ipfsUrl.replace('ipfs://', '')
   // Use a reliable IPFS gateway
   return `https://ipfs.io/ipfs/${hash}`
@@ -100,7 +100,7 @@ export async function fetchIPFSWithFallback(ipfsUrl: string): Promise<any> {
 
   const hash = ipfsUrl.replace('ipfs://', '')
   const gateways = getIPFSGateways()
-  
+
   let lastError: Error | null = null
 
   for (const gateway of gateways) {
@@ -108,17 +108,17 @@ export async function fetchIPFSWithFallback(ipfsUrl: string): Promise<any> {
       const url = `${gateway}${hash}`
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
-      
+
       const response = await fetch(url, {
         signal: controller.signal,
       })
-      
+
       clearTimeout(timeoutId)
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
-      
+
       return await response.json()
     } catch (error) {
       console.warn(`IPFS gateway ${gateway} failed:`, error)

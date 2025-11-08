@@ -53,7 +53,7 @@ export default function RatingModal({ isOpen, onClose, agentId, agentName }: Rat
       await submitRating(agentId, rating)
     } catch (err: any) {
       console.error('Failed to submit rating:', err)
-      
+
       // Check if user cancelled the transaction
       const errorMessage = err?.message?.toLowerCase() || ''
       if (
@@ -80,7 +80,7 @@ export default function RatingModal({ isOpen, onClose, agentId, agentName }: Rat
     (error as any)?.code === 4001 ||
     (error as any)?.code === 'ACTION_REJECTED'
   )
-  
+
   const isActualError = error && !isUserCancellation && !isCancelled
 
   if (!isOpen) return null
@@ -123,11 +123,11 @@ export default function RatingModal({ isOpen, onClose, agentId, agentName }: Rat
             <div className="bg-prxs-charcoal/30 rounded-xl p-6 mb-6">
               <p className="text-prxs-gray text-sm text-center mb-4">Select your rating</p>
               <div className="flex justify-center mb-4">
-                <StarRating 
-                  value={rating} 
+                <StarRating
+                  value={rating}
                   onChange={handleRatingChange}
                   onHoverChange={handleHoverChange}
-                  size="lg" 
+                  size="lg"
                 />
               </div>
               <div className="text-center">

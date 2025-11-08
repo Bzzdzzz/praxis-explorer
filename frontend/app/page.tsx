@@ -18,8 +18,8 @@ export default function HomePage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
 
-  const registryAddress: `0x${string}` = 
-    process.env.NEXT_PUBLIC_REGISTRY_ADDRESS as `0x${string}` 
+  const registryAddress: `0x${string}` =
+    process.env.NEXT_PUBLIC_REGISTRY_ADDRESS as `0x${string}`
     || '0x26B0E1f1aBA22315b344649c7171D985FB482454'
 
   const fetchAgents = useCallback(async (params: SearchParams, append = false) => {

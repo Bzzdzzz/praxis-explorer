@@ -99,14 +99,14 @@ export default function AgentDetailPage() {
   return (
     <div className="min-h-screen">
       <Header />
-      
+
       <RatingModal
         isOpen={isRatingModalOpen}
         onClose={() => setIsRatingModalOpen(false)}
         agentId={agent.agentId}
         agentName={agentName}
       />
-      
+
       <main className="pt-32 pb-20">
         <div className="section-container">
           <Link
@@ -162,7 +162,7 @@ export default function AgentDetailPage() {
                         {online ? 'Online' : `Last seen ${formatDate(agent.lastSeenAt)}`}
                       </span>
                     </div>
-                    
+
                     <button
                       onClick={() => setIsRatingModalOpen(true)}
                       className="px-4 py-2 bg-prxs-charcoal border border-prxs-charcoal hover:border-prxs-orange text-white font-medium rounded-full hover:bg-prxs-charcoal/80 transition-all flex items-center gap-2"

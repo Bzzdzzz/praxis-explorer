@@ -15,7 +15,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
   const description = agent.card?.description || 'No description available'
   const verified = agent.agentId > 0
   const { stars, count } = useAgentRating(agent.agentId)
-  
+
   // Safely handle skills array
   const safeSkills = Array.isArray(agent.skills) ? agent.skills : []
   const safeTrustModels = Array.isArray(agent.trustModels) ? agent.trustModels : []

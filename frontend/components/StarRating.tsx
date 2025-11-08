@@ -12,41 +12,41 @@ interface StarRatingProps {
 
 export default function StarRating({ value, onChange, onHoverChange, readonly = false, size = 'md' }: StarRatingProps) {
   const [hoverValue, setHoverValue] = useState<number | null>(null)
-  
+
   const sizeClasses = {
     sm: 'w-4 h-4',
     md: 'w-6 h-6',
     lg: 'w-8 h-8'
   }
-  
+
   const sizeClass = sizeClasses[size]
   const displayValue = hoverValue ?? value
-  
+
   const handleClick = (starValue: number) => {
     if (!readonly) {
       onChange(starValue)
     }
   }
-  
+
   const handleMouseEnter = (starValue: number) => {
     if (!readonly) {
       setHoverValue(starValue)
       onHoverChange?.(starValue)
     }
   }
-  
+
   const handleMouseLeave = () => {
     if (!readonly) {
       setHoverValue(null)
       onHoverChange?.(null)
     }
   }
-  
+
   const renderStar = (position: number) => {
     const starNumber = position + 1
     const fullStars = Math.floor(displayValue)
     const remainder = displayValue - fullStars
-    
+
     let fillPercentage = 0
     if (starNumber < fullStars) {
       fillPercentage = 100
@@ -55,7 +55,7 @@ export default function StarRating({ value, onChange, onHoverChange, readonly = 
     } else if (starNumber === fullStars + 1 && remainder > 0) {
       fillPercentage = 50
     }
-    
+
     return (
       <div
         key={position}
@@ -74,7 +74,7 @@ export default function StarRating({ value, onChange, onHoverChange, readonly = 
           onMouseEnter={() => handleMouseEnter(starNumber)}
           onClick={() => handleClick(starNumber)}
         />
-        
+
         {/* Star SVG with gradient fill */}
         <svg
           className={`${sizeClass} transition-colors pointer-events-none`}
@@ -97,7 +97,7 @@ export default function StarRating({ value, onChange, onHoverChange, readonly = 
       </div>
     )
   }
-  
+
   return (
     <div className="flex items-center gap-1">
       {[0, 1, 2, 3, 4].map(renderStar)}
