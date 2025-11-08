@@ -64,7 +64,7 @@ func TestStart_HandlesAgentRegisteredEventAndFetchesCard(t *testing.T) {
 		nets:    []Chain{},
 		seeds:   []string{},
 		clients: make(map[string]*ethclient.Client),
-		idents:  map[string]common.Address{"sepolia": common.HexToAddress("0x26B0E1f1aBA22315b344649c7171D985FB482454")},
+		idents:  map[string]common.Address{"sepolia": common.HexToAddress("0x1111111111111111111111111111111111111111")},
 	}
 	// Parse ABI same way the real constructor does
 	parsed, err := abi.JSON(strings.NewReader(erc.IdentityABI()))
@@ -83,23 +83,22 @@ func TestStart_HandlesAgentRegisteredEventAndFetchesCard(t *testing.T) {
 		close(done)
 	}()
 
-	// ---- 4) Craft a mock Registered log and feed it to the indexer
-	ev := ix.idABI.Events["Registered"]
+	// ---- 4) Craft a mock AgentRegistered log and feed it to the indexer
+	ev := ix.idABI.Events["AgentRegistered"]
 	agentID := big.NewInt(42)
-	owner := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	agentAddr := common.HexToAddress("0x2222222222222222222222222222222222222222")
 
-	// Pack data section: non-indexed args -> (tokenURI string)
-	data, err := ev.Inputs.NonIndexed().Pack(domain)
+	// Pack data section: non-indexed args -> (agentDomain string, agentAddress address)
+	data, err := ev.Inputs.NonIndexed().Pack(domain, agentAddr)
 	if err != nil {
 		t.Fatalf("pack event data: %v", err)
 	}
 
 	lg := types.Log{
-		Address: common.HexToAddress("0x26B0E1f1aBA22315b344649c7171D985FB482454"),
+		Address: common.HexToAddress("0xeFbcfaB3547EF997A747FeA1fCfBBb2fd3912445"),
 		Topics: []common.Hash{
-			ev.ID,                             // event signature
-			topicForUint256(agentID),          // indexed agentId
-			common.BytesToHash(owner.Bytes()), // indexed owner
+			ev.ID,                    // event signature
+			topicForUint256(agentID), // indexed agentId
 		},
 		Data:        data,
 		BlockNumber: 123,

@@ -5,12 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"net/http"
-	"os"
-	"strings"
-	"time"
-
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -20,6 +14,12 @@ import (
 	erc "github.com/praxis/praxis-explorer/internal/erc8004"
 	"github.com/praxis/praxis-explorer/internal/explorer/store"
 	log "github.com/sirupsen/logrus"
+	"math/big"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 )
 
 func init() {
@@ -91,6 +91,7 @@ func (ix *Indexer) Start(ctx context.Context) {
 	defer t.Stop()
 
 	ix.crawlSeeds(ctx)
+	ix.upgradeZeroIDs(ctx)
 	ix.startOnchainWatchers(ctx)
 
 	for {
@@ -100,6 +101,7 @@ func (ix *Indexer) Start(ctx context.Context) {
 			return
 		case <-t.C:
 			ix.crawlSeeds(ctx)
+			ix.upgradeZeroIDs(ctx)
 		}
 	}
 }
@@ -177,14 +179,14 @@ func (ix *Indexer) backfillAgents(ctx context.Context, chain string, client *eth
 	if err != nil {
 		return
 	}
-	count, err := ident.TotalAgents(ctx, &bind.CallOpts{Context: ctx})
+	count, err := ident.GetAgentCount(ctx, &bind.CallOpts{Context: ctx})
 	if err != nil || count == nil {
-		log.WithError(err).Error("failed to get total agents")
+		log.WithError(err).Error("failed to get agent count")
 		return
 	}
 	total := count.Int64()
 	if total <= 0 {
-		log.WithError(err).Error("total count is less than or equal to zero")
+		log.WithError(err).Error("total count is loe to zero")
 		return
 	}
 
@@ -199,20 +201,17 @@ func (ix *Indexer) backfillAgents(ctx context.Context, chain string, client *eth
 			log.WithError(err).Error("failed to get agent")
 			continue
 		}
-
-		// Use tokenURI directly as the domain for fetching
-		domain := ai.TokenURI
+		domain := strings.TrimSpace(ai.AgentDomain)
 		if domain == "" {
-			log.WithField("agentId", ai.AgentId).Warn("tokenURI is empty for agent")
+			log.Error("domain is empty string")
 			continue
 		}
-
 		log.WithFields(log.Fields{
 			"agent_id": ai.AgentId,
 			"chain":    chain,
-			"tokenURI": ai.TokenURI,
+			"count":    total,
 		}).Info("storing card")
-		ix.fetchAndStoreCard(ctx, chain, idAddr.Hex(), ai.AgentId.Int64(), ai.TokenURI)
+		ix.fetchAndStoreCard(ctx, chain, idAddr.Hex(), ai.AgentId.Int64(), domain)
 	}
 }
 
@@ -306,174 +305,8 @@ func (ix *Indexer) pollIdentity(ctx context.Context, chain string, client *ethcl
 	}
 }
 
-// Add IPFS gateway configuration
-func getIPFSGateways() []string {
-	gateways := os.Getenv("IPFS_GATEWAYS")
-	if gateways != "" {
-		return strings.Split(gateways, ",")
-	}
-	// Default IPFS gateways
-	return []string{
-		"https://ipfs.io/ipfs/",
-		"https://gateway.pinata.cloud/ipfs/",
-		"https://cloudflare-ipfs.com/ipfs/",
-		"https://dweb.link/ipfs/",
-	}
-}
-
-func (ix *Indexer) convertIPFSToHTTP(ipfsURL string) []string {
-	if !strings.HasPrefix(ipfsURL, "ipfs://") {
-		return []string{ipfsURL}
-	}
-
-	hash := strings.TrimPrefix(ipfsURL, "ipfs://")
-	gateways := getIPFSGateways()
-	var urls []string
-
-	for _, gateway := range gateways {
-		urls = append(urls, gateway+hash)
-	}
-
-	return urls
-}
-
-func (ix *Indexer) fetchIPFSMetadata(ctx context.Context, ipfsURL string) (map[string]any, error) {
-	urls := ix.convertIPFSToHTTP(ipfsURL)
-
-	for _, url := range urls {
-		log.WithField("url", url).Debug("trying IPFS gateway")
-
-		// Create a new context with timeout for each gateway attempt
-		reqCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
-
-		if err != nil {
-			cancel()
-			continue
-		}
-
-		client := &http.Client{
-			Timeout: 15 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			cancel()
-			log.WithError(err).WithField("url", url).Warn("IPFS gateway failed")
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			cancel()
-			log.WithField("status", resp.StatusCode).WithField("url", url).Warn("IPFS gateway returned error")
-			continue
-		}
-
-		var metadata map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-			resp.Body.Close()
-			cancel()
-			log.WithError(err).WithField("url", url).Warn("failed to decode IPFS metadata")
-			continue
-		}
-
-		resp.Body.Close()
-		cancel()
-		log.WithField("url", url).Info("successfully fetched IPFS metadata")
-		return metadata, nil
-	}
-
-	return nil, fmt.Errorf("failed to fetch IPFS metadata from any gateway")
-}
-
-func (ix *Indexer) fetchAndStoreCard(ctx context.Context, chain string, registryAddr string, agentID int64, tokenURI string) {
-	if strings.TrimSpace(tokenURI) == "" {
-		log.Error("TokenURI is empty")
-		return
-	}
-
-	var card map[string]any
-	var err error
-
-	// Check if this looks like an IPFS URL
-	if strings.HasPrefix(tokenURI, "ipfs://") {
-		card, err = ix.fetchIPFSMetadata(ctx, tokenURI)
-		if err != nil {
-			log.WithError(err).WithField("ipfsURL", tokenURI).Warn("failed to fetch IPFS metadata")
-			return
-		}
-	} else {
-		// Regular HTTP/HTTPS or domain-based fetching
-		url := tokenURI
-		if !strings.HasPrefix(tokenURI, "http://") && !strings.HasPrefix(tokenURI, "https://") {
-			url = fmt.Sprintf("http://%s/.well-known/agent-card.json", tokenURI)
-		} else if !strings.Contains(tokenURI, "/.well-known/agent-card.json") {
-			url = strings.TrimRight(tokenURI, "/") + "/.well-known/agent-card.json"
-		}
-
-		log.WithFields(log.Fields{
-			"chain":   chain,
-			"agentID": agentID,
-			"url":     url,
-		}).Info("fetching agent card")
-
-		resp, err := http.Get(url) // #nosec G107
-		if err != nil {
-			log.WithError(err).WithField("url", url).Warn("card fetch error")
-			return
-		}
-		defer resp.Body.Close()
-
-		if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
-			log.WithError(err).WithField("url", url).Warn("card decode error")
-			return
-		}
-	}
-
-	// Create a synthetic domain for database storage
-	var domain string
-	if strings.HasPrefix(tokenURI, "ipfs://") {
-		// For IPFS, create a synthetic domain based on agent name or hash
-		if agentName, ok := card["name"].(string); ok && agentName != "" {
-			domain = strings.ToLower(strings.ReplaceAll(agentName, " ", "-")) + ".ipfs"
-		} else {
-			hash := strings.TrimPrefix(tokenURI, "ipfs://")
-			if len(hash) > 12 {
-				domain = hash[:12] + ".ipfs"
-			} else {
-				domain = hash + ".ipfs"
-			}
-		}
-	} else {
-		// For regular URLs, try to extract domain or use tokenURI
-		if strings.HasPrefix(tokenURI, "http://") || strings.HasPrefix(tokenURI, "https://") {
-			parts := strings.Split(tokenURI, "/")
-			if len(parts) >= 3 {
-				domain = parts[2]
-			} else {
-				domain = tokenURI
-			}
-		} else {
-			domain = tokenURI
-		}
-	}
-
-	err = ix.store.UpsertAgentFromCard(ctx, chain, registryAddr, agentID, domain, card)
-	if err != nil {
-		log.WithError(err).WithField("agentID", agentID).Error("failed upserting agent from card")
-		return
-	}
-	log.WithFields(log.Fields{
-		"chain":    chain,
-		"agentID":  agentID,
-		"domain":   domain,
-		"tokenURI": tokenURI,
-	}).Info("card stored")
-}
-
 func (ix *Indexer) handleIdentityLog(ctx context.Context, chain string, lg types.Log) {
-	// Handle the new Registered event
+	// Try AgentRegistered / AgentUpdated
 	if len(lg.Topics) == 0 {
 		log.Error("Topics are zero")
 		return
@@ -484,64 +317,274 @@ func (ix *Indexer) handleIdentityLog(ctx context.Context, chain string, lg types
 		"block": lg.BlockNumber,
 	}).Debug("log received")
 
-	evRegistered := ix.idABI.Events["Registered"]
-	evMetadataSet := ix.idABI.Events["MetadataSet"]
+	// v1 event
+	if evV1, ok := ix.idABI.Events["Registered"]; ok && lg.Topics[0] == evV1.ID {
+		ix.handleRegistrationV1(ctx, chain, lg, evV1)
+		return
+	}
+
+	evReg := ix.idABI.Events["AgentRegistered"]
+	evUpd := ix.idABI.Events["AgentUpdated"]
 
 	switch lg.Topics[0] {
-	case evRegistered.ID:
-		if len(lg.Topics) < 3 {
-			log.Error("Number of topics is less than three for Registered event")
+	case evReg.ID:
+		if len(lg.Topics) < 2 {
+			log.Error("Number of topics is less thant two")
 			return
 		}
-		agentId := new(big.Int).SetBytes(lg.Topics[1].Bytes())
-		owner := common.BytesToAddress(lg.Topics[2].Bytes())
+		id := new(big.Int).SetBytes(lg.Topics[1].Bytes())
 
 		log.WithFields(log.Fields{
-			"chain":   chain,
-			"agentId": agentId.String(),
-			"owner":   owner.Hex(),
-		}).Info("Registered event")
+			"chain": chain,
+			"id":    id.String(),
+		}).Info("AgentRegistered event")
 
 		var data struct {
-			TokenURI string
+			AgentDomain  string
+			AgentAddress common.Address
 		}
-		if err := ix.idABI.UnpackIntoInterface(&data, "Registered", lg.Data); err != nil {
+		if err := ix.idABI.UnpackIntoInterface(&data, "AgentRegistered", lg.Data); err != nil {
 			log.WithError(err).Error("failed unpacking agent data from registered event")
 			return
 		}
-
 		reg := ix.idents[chain].Hex()
 		log.WithFields(log.Fields{
-			"agent_id":   agentId.String(),
+			"agent_id":   id.String(),
 			"chain":      chain,
 			"event_type": "registered",
-			"tokenURI":   data.TokenURI,
 		}).Info("storing card")
-		ix.fetchAndStoreCard(ctx, chain, reg, agentId.Int64(), data.TokenURI)
+		ix.fetchAndStoreCard(ctx, chain, reg, id.Int64(), data.AgentDomain)
 
-	case evMetadataSet.ID:
+	case evUpd.ID:
 		if len(lg.Topics) < 2 {
-			log.Error("Number of topics is less than two for MetadataSet event")
+			log.Error("Number of topics is less thant two")
 			return
 		}
-		agentId := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+		id := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+
+		log.WithFields(log.Fields{
+			"chain": chain,
+			"id":    id.String(),
+		}).Info("AgentUpdated event")
 
 		var data struct {
-			Key   string
-			Value []byte
+			AgentDomain  string
+			AgentAddress common.Address
 		}
-		if err := ix.idABI.UnpackIntoInterface(&data, "MetadataSet", lg.Data); err != nil {
-			log.WithError(err).Error("failed unpacking metadata from MetadataSet event")
+		if err := ix.idABI.UnpackIntoInterface(&data, "AgentUpdated", lg.Data); err != nil {
+			log.WithError(err).Error("failed unpacking agent data from updating event")
 			return
 		}
-
-		// For the new contract, we don't need to handle MetadataSet events
-		// since all agent data comes from tokenURI
+		reg := ix.idents[chain].Hex()
 		log.WithFields(log.Fields{
-			"agent_id":   agentId.String(),
+			"agent_id":   id.String(),
 			"chain":      chain,
-			"event_type": "metadata_updated",
-			"key":        data.Key,
-		}).Debug("metadata set event (ignored)")
+			"event_type": "updated",
+		}).Info("storing card")
+		ix.fetchAndStoreCard(ctx, chain, reg, id.Int64(), data.AgentDomain)
+	}
+}
+
+func (ix *Indexer) handleRegistrationV1(ctx context.Context, chain string, lg types.Log, ev abi.Event) {
+	// Topics: [signature, agentId (indexed), owner (indexed)]
+	if len(lg.Topics) < 3 {
+		log.Error("Registered v1: not enough topics")
+		return
+	}
+	agentID := new(big.Int).SetBytes(lg.Topics[1].Bytes())
+	owner := common.BytesToAddress(lg.Topics[2].Bytes()[12:]) // right-padded 32 bytes
+
+	// Data: NonIndexed = tokenURI (string)
+	nonargs := ev.Inputs.NonIndexed()
+	vals, err := abi.Arguments(nonargs).Unpack(lg.Data)
+	if err != nil {
+		log.WithError(err).Error("v1 Registered: unpack tokenURI failed")
+		return
+	}
+	if len(vals) != 1 {
+		log.WithField("got", len(vals)).Error("v1 Registered: unexpected outputs arity")
+		return
+	}
+	tokenURI, _ := vals[0].(string)
+
+	log.WithFields(log.Fields{
+		"chain":    chain,
+		"agent_id": agentID.String(),
+		"owner":    owner.Hex(),
+		"tokenURI": tokenURI,
+	}).Info("Registered v1 event")
+
+	// 1) Fetch registration JSON
+	reg, err := ix.fetchJSON(ctx, tokenURI)
+	if err != nil {
+		log.WithError(err).WithField("tokenURI", tokenURI).Warn("registration fetch error")
+		return
+	}
+
+	// 2) Parse endpoints (A2A, MCP, DID)
+	a2aURL, mcpURL, did := extractEndpoints(reg)
+	if a2aURL == "" {
+		log.WithFields(log.Fields{
+			"agent_id": agentID.String(),
+			"chain":    chain,
+			"mcp":      mcpURL,
+			"did":      did,
+		}).Warn("v1 registration has no A2A endpoint; skipping card fetch")
+		return
+	}
+
+	// 3) Fetch agent card via existing path
+	registry := ix.idents[chain].Hex()
+	ix.fetchAndStoreCard(ctx, chain, registry, agentID.Int64(), a2aURL)
+}
+
+// Helper: fetch arbitrary JSON (supports http(s) and ipfs://)
+func (ix *Indexer) fetchJSON(ctx context.Context, uri string) (map[string]any, error) {
+	u := strings.TrimSpace(uri)
+	if u == "" {
+		return nil, fmt.Errorf("empty uri")
+	}
+
+	// Support ipfs://CID[/path]
+	if strings.HasPrefix(u, "ipfs://") {
+		// naive gateway transform; can be made configurable
+		u = "https://ipfs.io/ipfs/" + strings.TrimPrefix(u, "ipfs://")
+	}
+
+	// Validate URL
+	if _, err := url.Parse(u); err != nil {
+		return nil, fmt.Errorf("invalid uri: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req) // #nosec G107
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Helper: extract A2A, MCP, DID from a v1 registration JSON
+func extractEndpoints(reg map[string]any) (a2a, mcp, did string) {
+	eps, ok := reg["endpoints"]
+	if !ok {
+		return "", "", ""
+	}
+	arr, ok := eps.([]interface{})
+	if !ok {
+		return "", "", ""
+	}
+	for _, raw := range arr {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		endpoint, _ := m["endpoint"].(string)
+
+		switch strings.ToUpper(strings.TrimSpace(name)) {
+		case "A2A":
+			a2a = endpoint
+		case "MCP":
+			mcp = endpoint
+		case "DID":
+			did = endpoint
+		}
+	}
+	return
+}
+
+func (ix *Indexer) fetchAndStoreCard(ctx context.Context, chain string, registryAddr string, agentID int64, domain string) {
+	d := strings.TrimSpace(domain)
+	if d == "" {
+		log.Error("Domain is zero")
+		return
+	}
+	// heuristic: build .well-known URL if needed
+	url := d
+	if !strings.HasPrefix(d, "http://") && !strings.HasPrefix(d, "https://") {
+		url = fmt.Sprintf("http://%s/.well-known/agent-card.json", d)
+	} else if !strings.Contains(d, "/.well-known/agent-card.json") {
+		url = strings.TrimRight(d, "/") + "/.well-known/agent-card.json"
+	}
+
+	log.WithFields(log.Fields{
+		"chain":   chain,
+		"agentID": agentID,
+		"url":     url,
+	}).Info("fetching agent card")
+
+	resp, err := http.Get(url) // #nosec G107
+	if err != nil {
+		log.WithError(err).WithField("url", url).Warn("card fetch error")
+		return
+	}
+	defer resp.Body.Close()
+
+	var card map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		log.WithError(err).WithField("url", url).Warn("card decode error")
+		return
+	}
+
+	err = ix.store.UpsertAgentFromCard(ctx, chain, registryAddr, agentID, d, card)
+	if err != nil {
+		log.WithError(err).WithField("agentID", agentID).Error("failed upserting agent from card")
+		return
+	}
+	log.WithFields(log.Fields{
+		"chain":   chain,
+		"agentID": agentID,
+		"domain":  d,
+	}).Info("card stored")
+}
+
+// upgradeZeroIDs resolves agentId on-chain for domains saved with placeholder agent_id=0
+func (ix *Indexer) upgradeZeroIDs(ctx context.Context) {
+	for _, n := range ix.nets {
+		log.WithField("chain", n.Name).Info("checking zero-id agents")
+
+		client := ix.clients[n.Name]
+		if client == nil {
+			c, err := ethclient.Dial(os.ExpandEnv(n.RPC))
+			if err != nil {
+				continue
+			}
+			ix.clients[n.Name] = c
+			client = c
+		}
+		idAddr, ok := ix.idents[n.Name]
+		if !ok || (idAddr == common.Address{}) {
+			ix.idents[n.Name] = common.HexToAddress(n.Identity)
+			idAddr = ix.idents[n.Name]
+		}
+
+		domains, err := ix.store.ListZeroIDAgents(ctx, n.Name, 200)
+		if err != nil || len(domains) == 0 {
+			continue
+		}
+
+		ident, err := erc.NewIdentity(idAddr, client)
+		if err != nil {
+			continue
+		}
+
+		for _, d := range domains {
+			ai, err := ident.ResolveByDomain(ctx, &bind.CallOpts{Context: ctx}, d)
+			if err != nil || ai.AgentId == nil || ai.AgentId.Int64() == 0 {
+				continue
+			}
+			ix.fetchAndStoreCard(ctx, n.Name, idAddr.Hex(), ai.AgentId.Int64(), d)
+			_ = ix.store.DeleteAgent(ctx, n.Name, 0)
+		}
 	}
 }

@@ -19,12 +19,10 @@ import (
 type mockBackend struct {
 	abi  abi.ABI
 	data struct {
-		count     *big.Int
-		agents    map[int64]agentInfoTuple
-		tokenURIs map[int64]string
-		owners    map[int64]common.Address
-		metadata  map[int64]map[string][]byte
-		exists    map[int64]bool
+		count  *big.Int
+		byID   map[int64]agentInfoTuple
+		byDom  map[string]agentInfoTuple
+		byAddr map[common.Address]agentInfoTuple
 	}
 }
 
@@ -54,41 +52,41 @@ func (m *mockBackend) CallContract(ctx context.Context, call ethereum.CallMsg, _
 				args = in
 			}
 			switch name {
-			case "totalAgents":
+			case "getAgentCount":
 				return method.Outputs.Pack(m.data.count)
 
-			case "agentExists":
+			case "getAgent":
 				if len(args) != 1 {
 					return nil, nil
 				}
 				id, _ := args[0].(*big.Int)
-				exists := m.data.exists[id.Int64()]
-				return method.Outputs.Pack(exists)
+				info, ok := m.data.byID[id.Int64()]
+				if !ok {
+					info = agentInfoTuple{AgentId: big.NewInt(0)}
+				}
+				return method.Outputs.Pack(info)
 
-			case "tokenURI":
+			case "resolveByDomain":
 				if len(args) != 1 {
 					return nil, nil
 				}
-				id, _ := args[0].(*big.Int)
-				uri := m.data.tokenURIs[id.Int64()]
-				return method.Outputs.Pack(uri)
+				domain, _ := args[0].(string)
+				info, ok := m.data.byDom[domain]
+				if !ok {
+					info = agentInfoTuple{AgentId: big.NewInt(0)}
+				}
+				return method.Outputs.Pack(info)
 
-			case "ownerOf":
+			case "resolveByAddress":
 				if len(args) != 1 {
 					return nil, nil
 				}
-				id, _ := args[0].(*big.Int)
-				owner := m.data.owners[id.Int64()]
-				return method.Outputs.Pack(owner)
-
-			case "getMetadata":
-				if len(args) != 2 {
-					return nil, nil
+				addr, _ := args[0].(common.Address)
+				info, ok := m.data.byAddr[addr]
+				if !ok {
+					info = agentInfoTuple{AgentId: big.NewInt(0)}
 				}
-				id, _ := args[0].(*big.Int)
-				key, _ := args[1].(string)
-				value := m.data.metadata[id.Int64()][key]
-				return method.Outputs.Pack(value)
+				return method.Outputs.Pack(info)
 			}
 		}
 	}
@@ -169,42 +167,25 @@ func (m *mockBackend) SubscribeNewHead(ctx context.Context, _ chan<- *types.Head
 
 func newMockBackend(t *testing.T) *mockBackend {
 	t.Helper()
-	parsed, err := abi.JSON(strings.NewReader(IdentityRegistryABI))
+	parsed, err := abi.JSON(strings.NewReader(identityABI))
 	if err != nil {
 		t.Fatalf("abi parse: %v", err)
 	}
 	m := &mockBackend{abi: parsed}
 	m.data.count = big.NewInt(3)
-	m.data.agents = map[int64]agentInfoTuple{}
-	m.data.tokenURIs = map[int64]string{}
-	m.data.owners = map[int64]common.Address{}
-	m.data.metadata = map[int64]map[string][]byte{}
-	m.data.exists = map[int64]bool{}
+	m.data.byID = map[int64]agentInfoTuple{}
+	m.data.byDom = map[string]agentInfoTuple{}
+	m.data.byAddr = map[common.Address]agentInfoTuple{}
 
-	// Set up test data
-	agents := []struct {
-		id       int64
-		tokenURI string
-		owner    common.Address
-		domain   string
-	}{
-		{1, "alpha.example", common.HexToAddress("0x00000000000000000000000000000000000000a1"), "alpha.example"},
-		{2, "beta.example", common.HexToAddress("0x00000000000000000000000000000000000000b2"), "beta.example"},
-		{3, "gamma.example", common.HexToAddress("0x00000000000000000000000000000000000000c3"), "gamma.example"},
+	agents := []agentInfoTuple{
+		{AgentId: big.NewInt(1), AgentDomain: "alpha.example", AgentAddress: common.HexToAddress("0x00000000000000000000000000000000000000a1")},
+		{AgentId: big.NewInt(2), AgentDomain: "beta.example", AgentAddress: common.HexToAddress("0x00000000000000000000000000000000000000b2")},
+		{AgentId: big.NewInt(3), AgentDomain: "gamma.example", AgentAddress: common.HexToAddress("0x00000000000000000000000000000000000000c3")},
 	}
-
 	for _, a := range agents {
-		m.data.exists[a.id] = true
-		m.data.tokenURIs[a.id] = a.tokenURI
-		m.data.owners[a.id] = a.owner
-		m.data.metadata[a.id] = map[string][]byte{
-			"domain": []byte(a.domain),
-		}
-		m.data.agents[a.id] = agentInfoTuple{
-			AgentId:  big.NewInt(a.id),
-			TokenURI: a.tokenURI,
-			Owner:    a.owner,
-		}
+		m.data.byID[a.AgentId.Int64()] = a
+		m.data.byDom[a.AgentDomain] = a
+		m.data.byAddr[a.AgentAddress] = a
 	}
 	return m
 }
@@ -215,7 +196,7 @@ func newMockBackend(t *testing.T) *mockBackend {
 //
 // ---------------------------
 
-func TestIdentity_GetAgent(t *testing.T) {
+func TestIdentity_TupleDecoding_GetAgent(t *testing.T) {
 	m := newMockBackend(t)
 	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
 	if err != nil {
@@ -231,68 +212,70 @@ func TestIdentity_GetAgent(t *testing.T) {
 		if got.AgentId.Int64() != i {
 			t.Fatalf("GetAgent(%d) AgentId mismatch: got %d", i, got.AgentId.Int64())
 		}
-		wantURI := []string{"alpha.example", "beta.example", "gamma.example"}[i-1]
-		if got.TokenURI != wantURI {
-			t.Fatalf("GetAgent(%d) TokenURI mismatch: got %q want %q", i, got.TokenURI, wantURI)
+		wantDom := []string{"alpha.example", "beta.example", "gamma.example"}[i-1]
+		if got.AgentDomain != wantDom {
+			t.Fatalf("GetAgent(%d) AgentDomain mismatch: got %q want %q", i, got.AgentDomain, wantDom)
 		}
 	}
 }
 
-func TestIdentity_TotalAgents(t *testing.T) {
+func TestIdentity_TupleDecoding_ResolveByDomain(t *testing.T) {
 	m := newMockBackend(t)
 	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
 	if err != nil {
 		t.Fatalf("new identity: %v", err)
 	}
-	got, err := id.TotalAgents(context.Background(), nil)
+
+	cases := map[string]int64{
+		"alpha.example": 1,
+		"beta.example":  2,
+		"gamma.example": 3,
+	}
+	for dom, wantID := range cases {
+		got, err := id.ResolveByDomain(context.Background(), nil, dom)
+		if err != nil {
+			t.Fatalf("ResolveByDomain(%q) error: %v", dom, err)
+		}
+		if got.AgentId.Int64() != wantID {
+			t.Fatalf("ResolveByDomain(%q) AgentId mismatch: got %d want %d", dom, got.AgentId.Int64(), wantID)
+		}
+		if got.AgentDomain != dom {
+			t.Fatalf("ResolveByDomain(%q) AgentDomain mismatch: got %q", dom, got.AgentDomain)
+		}
+	}
+}
+
+func TestIdentity_TupleDecoding_ResolveByAddress(t *testing.T) {
+	m := newMockBackend(t)
+	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
 	if err != nil {
-		t.Fatalf("TotalAgents error: %v", err)
+		t.Fatalf("new identity: %v", err)
+	}
+	for addr, want := range m.data.byAddr {
+		got, err := id.ResolveByAddress(context.Background(), nil, addr)
+		if err != nil {
+			t.Fatalf("ResolveByAddress(%s) error: %v", addr.Hex(), err)
+		}
+		if got.AgentId.Cmp(want.AgentId) != 0 {
+			t.Fatalf("ResolveByAddress(%s) AgentId mismatch: got %s want %s", addr.Hex(), got.AgentId, want.AgentId)
+		}
+		if got.AgentAddress != addr {
+			t.Fatalf("ResolveByAddress(%s) AgentAddress mismatch: got %s", addr.Hex(), got.AgentAddress.Hex())
+		}
+	}
+}
+
+func TestIdentity_GetAgentCount(t *testing.T) {
+	m := newMockBackend(t)
+	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
+	if err != nil {
+		t.Fatalf("new identity: %v", err)
+	}
+	got, err := id.GetAgentCount(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("GetAgentCount error: %v", err)
 	}
 	if got.Cmp(m.data.count) != 0 {
-		t.Fatalf("TotalAgents mismatch: got %s want %s", got, m.data.count)
-	}
-}
-
-func TestIdentity_AgentExists(t *testing.T) {
-	m := newMockBackend(t)
-	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
-	if err != nil {
-		t.Fatalf("new identity: %v", err)
-	}
-
-	// Test existing agents
-	for i := int64(1); i <= 3; i++ {
-		exists, err := id.AgentExists(context.Background(), nil, big.NewInt(i))
-		if err != nil {
-			t.Fatalf("AgentExists(%d) error: %v", i, err)
-		}
-		if !exists {
-			t.Fatalf("AgentExists(%d) should be true", i)
-		}
-	}
-
-	// Test non-existing agent
-	exists, err := id.AgentExists(context.Background(), nil, big.NewInt(999))
-	if err != nil {
-		t.Fatalf("AgentExists(999) error: %v", err)
-	}
-	if exists {
-		t.Fatalf("AgentExists(999) should be false")
-	}
-}
-
-func TestIdentity_GetMetadata(t *testing.T) {
-	m := newMockBackend(t)
-	id, err := NewIdentity(common.HexToAddress("0x000000000000000000000000000000000000dead"), m)
-	if err != nil {
-		t.Fatalf("new identity: %v", err)
-	}
-
-	domain, err := id.GetMetadata(context.Background(), nil, big.NewInt(1), "domain")
-	if err != nil {
-		t.Fatalf("GetMetadata error: %v", err)
-	}
-	if string(domain) != "alpha.example" {
-		t.Fatalf("GetMetadata mismatch: got %s want alpha.example", string(domain))
+		t.Fatalf("GetAgentCount mismatch: got %s want %s", got, m.data.count)
 	}
 }
