@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import RatingModal from '@/components/RatingModal'
+import { useAgentRating } from '@/hooks/useAgentRating'
 import { getAgent } from '@/lib/api'
 import { AgentRow } from '@/types/agent'
 import { formatDate, isOnline, getChainName, truncateAddress, extractSkillName, extractSkillTags, isIPFSUrl } from '@/lib/utils'
@@ -15,6 +17,11 @@ export default function AgentDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'skills' | 'capabilities' | 'raw'>('overview')
+  const [isRatingModalOpen, setIsRatingModalOpen] = useState(false)
+
+  // Fetch rating summary from contract
+  const agentIdNum = params?.agentId ? parseInt(params.agentId) : 0
+  const { stars, count, isLoading: ratingLoading } = useAgentRating(agentIdNum)
 
   useEffect(() => {
     const fetchAgent = async () => {
@@ -93,6 +100,13 @@ export default function AgentDetailPage() {
     <div className="min-h-screen">
       <Header />
       
+      <RatingModal
+        isOpen={isRatingModalOpen}
+        onClose={() => setIsRatingModalOpen(false)}
+        agentId={agent.agentId}
+        agentName={agentName}
+      />
+      
       <main className="pt-32 pb-20">
         <div className="section-container">
           <Link
@@ -148,6 +162,16 @@ export default function AgentDetailPage() {
                         {online ? 'Online' : `Last seen ${formatDate(agent.lastSeenAt)}`}
                       </span>
                     </div>
+                    
+                    <button
+                      onClick={() => setIsRatingModalOpen(true)}
+                      className="px-4 py-2 bg-prxs-charcoal border border-prxs-charcoal hover:border-prxs-orange text-white font-medium rounded-full hover:bg-prxs-charcoal/80 transition-all flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                      </svg>
+                      Rate Agent
+                    </button>
                   </div>
                 </div>
 
@@ -169,17 +193,25 @@ export default function AgentDetailPage() {
                     </p>
                   </div>
                   
-                  {agent.scoreAvg && (
-                    <div className="bg-prxs-black/50 border border-prxs-charcoal rounded-xl p-4">
-                      <p className="text-sm text-prxs-gray mb-1">Rating</p>
+                  <div className="bg-prxs-black/50 border border-prxs-charcoal rounded-xl p-4">
+                    <p className="text-sm text-prxs-gray mb-1">Rating</p>
+                    {ratingLoading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-prxs-gray border-t-transparent rounded-full animate-spin" />
+                        <span className="text-sm text-prxs-gray">Loading...</span>
+                      </div>
+                    ) : count > 0 ? (
                       <div className="flex items-center gap-2">
                         <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                         </svg>
-                        <span className="text-lg font-semibold text-white">{agent.scoreAvg.toFixed(1)}</span>
+                        <span className="text-lg font-semibold text-white">{stars.toFixed(1)}</span>
+                        <span className="text-sm text-prxs-gray">({count})</span>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <span className="text-lg text-prxs-gray">No rating</span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2 mb-8">
