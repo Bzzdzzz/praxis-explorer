@@ -10,3 +10,11 @@ export const identityRegistryAbi = parseAbi([
   "function agentExists(uint256 agentId) view returns (bool exists)",
   "event Registered(uint256 indexed agentId, string tokenURI, address indexed owner)",
 ]);
+
+export const reputationRegistryAbi = parseAbi([
+  "function giveFeedback(uint256 agentId, uint8 score, bytes32 tag1, bytes32 tag2, string fileuri, bytes32 filehash, bytes feedbackAuth) external",
+  "function revokeFeedback(uint256 agentId, uint64 feedbackIndex) external",
+  "function getSummary(uint256 agentId, address[] clientAddresses, bytes32 tag1, bytes32 tag2) external view returns (uint64 count, uint8 averageScore)",
+  "function readFeedback(uint256 agentId, address clientAddress, uint64 index) external view returns (uint8 score, bytes32 tag1, bytes32 tag2, bool isRevoked)",
+  "event NewFeedback(uint256 indexed agentId, address indexed clientAddress, uint8 score, bytes32 indexed tag1, bytes32 tag2, string fileuri, bytes32 filehash)",
+]);

@@ -57,7 +57,7 @@ func TestStart_HandlesRegisteredEventAndFetchesCard(t *testing.T) {
 		nets:    []Chain{},
 		seeds:   []string{},
 		clients: make(map[string]*ethclient.Client),
-		idents:  map[string]common.Address{"sepolia": common.HexToAddress("0xb6cb1a0e1f54264cf6b41278e4d392993a19767d")},
+		idents:  map[string]common.Address{"sepolia": common.HexToAddress("0x26B0E1f1aBA22315b344649c7171D985FB482454")},
 	}
 	// Parse ABI same way the real constructor does
 	parsed, err := abi.JSON(strings.NewReader(erc.IdentityABI()))
@@ -88,7 +88,7 @@ func TestStart_HandlesRegisteredEventAndFetchesCard(t *testing.T) {
 	}
 
 	lg := types.Log{
-		Address: common.HexToAddress("0xb6cb1a0e1f54264cf6b41278e4d392993a19767d"),
+		Address: common.HexToAddress("0x26B0E1f1aBA22315b344649c7171D985FB482454"),
 		Topics: []common.Hash{
 			ev.ID,                             // event signature
 			topicForUint256(agentID),          // indexed agentId

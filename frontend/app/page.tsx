@@ -20,7 +20,7 @@ export default function HomePage() {
 
   const registryAddress: `0x${string}` = 
     process.env.NEXT_PUBLIC_REGISTRY_ADDRESS as `0x${string}` 
-    || '0xb6cb1a0e1f54264cf6b41278e4d392993a19767d'
+    || '0x26B0E1f1aBA22315b344649c7171D985FB482454'
 
   const fetchAgents = useCallback(async (params: SearchParams, append = false) => {
     try {
